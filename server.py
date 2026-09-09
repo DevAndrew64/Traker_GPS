@@ -433,6 +433,36 @@ def map_page():
                 </label>
             </div>
 
+            <!-- Geofence -->
+            <div class="space-y-2 mb-4 bg-white p-3 rounded-xl border border-gray-200/60 shadow-sm">
+                <label class="flex items-center space-x-3 cursor-pointer group">
+                    <input type="checkbox" id="toggleGeofence" class="form-checkbox h-4 w-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500">
+                    <span class="text-gray-700 text-xs font-semibold uppercase tracking-wider">Geofence</span>
+                </label>
+
+                <div id="geofenceControls" class="space-y-2 pt-1 opacity-40 pointer-events-none transition-opacity duration-200">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="number" step="any" id="geoLat" placeholder="Lat centro" class="w-full px-2 py-1.5 bg-white border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <input type="number" step="any" id="geoLon" placeholder="Lon centro" class="w-full px-2 py-1.5 bg-white border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+
+                    <div class="flex space-x-2">
+                        <select id="geoDeviceSelect" class="flex-1 px-2 py-1.5 bg-white border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <option value="">Tomar de un GPS...</option>
+                        </select>
+                        <button id="geoUseDeviceBtn" type="button" class="px-2.5 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-semibold hover:bg-purple-700 transition-colors">Usar</button>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-[11px] text-gray-500 mb-1">
+                            <span>Radio</span>
+                            <span id="geoRadiusLabel" class="font-mono font-semibold text-purple-700">800 m</span>
+                        </div>
+                        <input type="range" id="geoRadius" min="100" max="5000" step="50" value="800" class="w-full accent-purple-600">
+                    </div>
+                </div>
+            </div>
+
             <!-- Buscador de IMEI -->
             <div class="relative">
                 <input
@@ -488,6 +518,18 @@ def map_page():
         let wsReconnectDelay = 2000;
         let wsConnected = false;
 
+        // Estado de la geofence: centro configurable a mano o tomado de la
+        // posición actual de un GPS, y radio ajustable con el slider.
+        // Todo vive en el navegador (no se persiste en el backend); es una
+        // capa de vigilancia visual sobre lo que ya está llegando en tiempo
+        // real por WebSocket.
+        let geofenceEnabled = false;
+        let geofenceCenter = { lat: 3.416, lon: -76.55 };
+        let geofenceRadius = 800; // metros
+        let geofenceCircle = null;
+        const alertRings = {};       // imei -> circulo rojo cuando está fuera
+        const deviceGeofenceState = {}; // imei -> true (dentro) / false (fuera), para no floodear toasts
+
         function showToast(message) {
             const toast = document.getElementById('toast');
             document.getElementById('toast-msg').innerText = message;
@@ -495,6 +537,62 @@ def map_page():
             setTimeout(() => {
                 toast.classList.add('translate-x-full', 'opacity-0');
             }, 3500);
+        }
+
+        // Distancia en metros entre dos coordenadas (fórmula de Haversine).
+        function distanciaMetros(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const toRad = (v) => (v * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // Dibuja (o redibuja) el círculo de la geofence en el mapa según el
+        // centro y radio actuales. Si está deshabilitada, la quita.
+        function drawGeofence() {
+            if (geofenceCircle) {
+                map.removeLayer(geofenceCircle);
+                geofenceCircle = null;
+            }
+            if (!geofenceEnabled) return;
+            geofenceCircle = L.circle([geofenceCenter.lat, geofenceCenter.lon], {
+                radius: geofenceRadius,
+                color: '#9333ea',
+                fillColor: '#a855f7',
+                fillOpacity: 0.10,
+                weight: 2,
+                dashArray: '6 6'
+            }).addTo(map);
+        }
+
+        // Mantiene el <select> de "tomar posición de un GPS" sincronizado
+        // con los dispositivos que van apareciendo, sin perder lo elegido.
+        function actualizarSelectDispositivosGeofence() {
+            const select = document.getElementById('geoDeviceSelect');
+            const actual = select.value;
+            const imeis = Array.from(devicesMap.keys());
+            select.innerHTML = ['<option value="">Tomar de un GPS...</option>']
+                .concat(imeis.map(imei => `<option value="${imei}">${imei}</option>`))
+                .join('');
+            if (imeis.includes(actual)) select.value = actual;
+        }
+
+        // Evalúa si un dispositivo está dentro o fuera de la geofence y
+        // avisa por toast solo cuando CAMBIA de estado (no en cada mensaje).
+        function evaluarGeofencePorDispositivo(d) {
+            if (!geofenceEnabled) return null;
+            const dist = distanciaMetros(geofenceCenter.lat, geofenceCenter.lon, Number(d.lat), Number(d.lon));
+            const dentro = dist <= geofenceRadius;
+            const previo = deviceGeofenceState[d.imei];
+            if (previo !== undefined && previo !== dentro) {
+                showToast(dentro ? `${d.imei} volvió a entrar a la geofence` : `${d.imei} salió de la geofence`);
+            }
+            deviceGeofenceState[d.imei] = dentro;
+            return dentro;
         }
 
         // Único punto de entrada para agregar/actualizar un dispositivo.
@@ -605,6 +703,8 @@ def map_page():
 
         // Renderizado integral de la interfaz (Lista y Marcadores)
         function renderUI() {
+            actualizarSelectDispositivosGeofence();
+
             const listEl = document.getElementById('deviceList');
             listEl.innerHTML = '';
 
@@ -632,12 +732,22 @@ def map_page():
                 const li = document.createElement('li');
                 li.className = "p-3.5 bg-white hover:bg-blue-50/50 border border-gray-200/70 rounded-xl cursor-pointer transition-all duration-200 shadow-sm flex flex-col group";
 
+                const dentroGeofence = evaluarGeofencePorDispositivo(d);
+                const badgeGeofence = geofenceEnabled
+                    ? (dentroGeofence
+                        ? `<span class="flex items-center text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-100 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1"></span>Dentro</span>`
+                        : `<span class="flex items-center text-[10px] bg-red-50 text-red-700 px-2 py-0.5 rounded-full font-medium border border-red-100 ml-1"><span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse mr-1"></span>Fuera</span>`)
+                    : '';
+
                 li.innerHTML = `
                     <div class="flex justify-between items-center mb-1">
                         <span class="font-bold text-gray-800 text-xs font-mono group-hover:text-blue-600">${d.imei}</span>
-                        <span class="flex items-center text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-100">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1"></span> Activo
-                        </span>
+                        <div class="flex items-center">
+                            <span class="flex items-center text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-medium border border-emerald-100">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1"></span> Activo
+                            </span>
+                            ${badgeGeofence}
+                        </div>
                     </div>
                     <div class="text-[11px] text-gray-500 flex justify-between font-mono mt-1">
                         <span>Lat: ${Number(d.lat).toFixed(4)}</span>
@@ -666,12 +776,32 @@ def map_page():
                     markers[d.imei].setLatLng(latLng);
                     markers[d.imei].getPopup().setContent(popupHTML);
                 }
+
+                // Anillo rojo pegado al marcador cuando el dispositivo está
+                // fuera de la geofence activa; se quita apenas vuelve a entrar
+                // o se desactiva la geofence.
+                if (geofenceEnabled && dentroGeofence === false) {
+                    if (!alertRings[d.imei]) {
+                        alertRings[d.imei] = L.circleMarker(latLng, {
+                            radius: 14, color: '#dc2626', weight: 2, fillColor: '#ef4444', fillOpacity: 0.25
+                        }).addTo(map);
+                    } else {
+                        alertRings[d.imei].setLatLng(latLng);
+                    }
+                } else if (alertRings[d.imei]) {
+                    map.removeLayer(alertRings[d.imei]);
+                    delete alertRings[d.imei];
+                }
             });
 
             Object.keys(markers).forEach(imei => {
                 if (!activeIMEIsOnMap.has(imei)) {
                     map.removeLayer(markers[imei]);
                     delete markers[imei];
+                    if (alertRings[imei]) {
+                        map.removeLayer(alertRings[imei]);
+                        delete alertRings[imei];
+                    }
                 }
             });
         }
@@ -704,6 +834,51 @@ def map_page():
                 if (isHeatmapVisible) map.addLayer(heatLayer);
                 else map.removeLayer(heatLayer);
             }
+        });
+
+        // --- Controles de la geofence ---
+        document.getElementById('toggleGeofence').addEventListener('change', (e) => {
+            geofenceEnabled = e.target.checked;
+            const controls = document.getElementById('geofenceControls');
+            controls.classList.toggle('opacity-40', !geofenceEnabled);
+            controls.classList.toggle('pointer-events-none', !geofenceEnabled);
+            if (!geofenceEnabled) {
+                Object.keys(alertRings).forEach(imei => { map.removeLayer(alertRings[imei]); delete alertRings[imei]; });
+            }
+            drawGeofence();
+            renderUI();
+        });
+
+        document.getElementById('geoLat').addEventListener('change', (e) => {
+            const v = parseFloat(e.target.value);
+            if (!isNaN(v)) { geofenceCenter.lat = v; drawGeofence(); renderUI(); }
+        });
+
+        document.getElementById('geoLon').addEventListener('change', (e) => {
+            const v = parseFloat(e.target.value);
+            if (!isNaN(v)) { geofenceCenter.lon = v; drawGeofence(); renderUI(); }
+        });
+
+        document.getElementById('geoRadius').addEventListener('input', (e) => {
+            geofenceRadius = Number(e.target.value);
+            document.getElementById('geoRadiusLabel').innerText = `${geofenceRadius} m`;
+            drawGeofence();
+            renderUI();
+        });
+
+        document.getElementById('geoUseDeviceBtn').addEventListener('click', () => {
+            const imei = document.getElementById('geoDeviceSelect').value;
+            if (!imei || !devicesMap.has(imei)) {
+                showToast('Elegí un dispositivo de la lista primero');
+                return;
+            }
+            const d = devicesMap.get(imei);
+            geofenceCenter = { lat: Number(d.lat), lon: Number(d.lon) };
+            document.getElementById('geoLat').value = geofenceCenter.lat.toFixed(6);
+            document.getElementById('geoLon').value = geofenceCenter.lon.toFixed(6);
+            drawGeofence();
+            renderUI();
+            showToast(`Geofence centrada en ${imei}`);
         });
 
         // Carga inicial + canal en tiempo real.
