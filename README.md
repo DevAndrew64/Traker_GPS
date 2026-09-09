@@ -1,6 +1,42 @@
 # Prueba Técnica GPS - MotoSmart
 
+Decidí dejar solo 3 protocolos cubiertos, para el alcance mencionado creo que será suficiente, deje los siguientes:
+
+0x01 (Login)
+0x12 (Ubicación)
+0x22 (Ubicación)
+0x13 (Heartbeat)
+Ya que lo necesario es mostrar en un endpoint que devuelva la ultima posición del dispotivo.
+
+Se utilizará una función para parsear las coordenadas.
+Y otra para guardar posición.
+Una función especifica para concentrar un cliente (GPS)
+
+
+
 Dejo acá anotado cómo se sube y se corre esto, para no tener que acordarme de memoria cada vez.
+
+## Arquitectura
+
+He optado por la arquitectura asincrónica, para mantener la coroutine de cada uno de los Trackers que van a estar conectados y no hacer una llamada de función independiente en código “quemado” por cada uno de ellos.
+
+Librería/Dependencia “asyncio” de Python
+
+El frontend fue impulsado por IA para hacer grafico el muestro de datos que traian los websockets.
+Html/JS Puro, se consume unpkg (leaflet) que da vista a un OpenStreetMap
+
+## Manejo de Excepciones
+
+Ya que estoy utilizando Python uso su nomenclatura de “try…catch” para controlar algún error interno y no rompa el modulo si algo llega a suceder
+
+Se hacen validaciones de contenido del Start Bit y Stop Bit al inicio de la función que va a procesar la invocación
+El buffer puede esperar a que se complete una trama incompleta.
+
+## Manejo de Datos
+
+Apoyo la decisión de usar PostgreSQL ya que mantiene buena integridad y persistencia para datos de streaming como las ubicaciones, incluso para datos biométricos.
+
+Terminé utilizando SupaBase que usa PostgreSQL internamente.
 
 ## Acceso al servidor
 
