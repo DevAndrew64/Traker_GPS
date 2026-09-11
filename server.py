@@ -20,7 +20,7 @@ API_PORT = 8000
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://fstdlfqpbhghrbtvkpdv.supabase.co")
 SUPABASE_KEY = os.getenv(
     "SUPABASE_SERVICE_ROLE_KEY",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZzdGRsZnFwYmhnaHJidHZrcGR2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODcxNTgxMywiZXhwIjoyMDk0MjkxODEzfQ.uOiqh08uQIBB2J-0WU4S4oyZWtDZFN6p3U7hymrPJa4",
+    "SR Removido",
 )
 
 if not SUPABASE_URL or not SUPABASE_KEY:
